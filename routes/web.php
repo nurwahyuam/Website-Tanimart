@@ -45,7 +45,9 @@ Route::middleware(['auth', 'role:seller'])->group(function () {
 
 // Group untuk customer
 Route::middleware(['auth', 'role:customer'])->group(function () {
-    Route::get('/customer/dashboard', [CustomerDashboardController::class, 'index'])->name('customer.dashboard');
+    Route::get('/home', [CustomerDashboardController::class, 'index'])->name('customer.home');
+    Route::get('/product/detail/{product:name}', [CustomerDashboardController::class, 'show'])->name('customer.detail-product');
+    Route::get('/product/checkout', [CustomerDashboardController::class, 'checkout'])->name('customer.checkout');
 });
 
 require __DIR__.'/settings.php';
