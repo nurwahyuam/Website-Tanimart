@@ -1,10 +1,11 @@
 <?php
 
-use App\Http\Controllers\Admin\OrderController;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\GoogleController;
 use App\Http\Controllers\Admin\UserController;
+use App\Http\Controllers\Admin\OrderController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\Admin\ProductController;
 use App\Http\Controllers\Admin\CategoryController;
 use App\Http\Controllers\Admin\AdminDashboardController;
@@ -35,7 +36,7 @@ Route::middleware(['auth', 'role:admin'])->group(function () {
     Route::put('/admin/product/{product}/update', [ProductController::class, 'update'])->name('admin.product.update');
     Route::delete('/admin/product/{product}', [ProductController::class, 'destroy'])->name('admin.product.destroy');
 
-     Route::get('admin/orders', [OrderController::class, 'index'])->name('admin.order.index');
+    Route::get('admin/orders', [OrderController::class, 'index'])->name('admin.order.index');
 });
 
 // Group untuk seller
@@ -48,7 +49,11 @@ Route::middleware(['auth', 'role:customer'])->group(function () {
     Route::get('/home', [CustomerDashboardController::class, 'index'])->name('customer.home');
     Route::get('/product/detail/{product:name}', [CustomerDashboardController::class, 'show'])->name('customer.detail-product');
     Route::get('/product/checkout', [CustomerDashboardController::class, 'checkout'])->name('customer.checkout');
+    Route::post('/product/checkout', [CustomerDashboardController::class, 'store'])->name('customer.checkout.store');
+    Route::post('/notifications/mark-as-read', [NotificationController::class, 'markAsRead'])->name('notifications.markAsRead');
+
+    Route::post('/notifications/mark-all-as-read', [NotificationController::class, 'markAllAsRead'])->name('notifications.markAllAsRead');
 });
 
-require __DIR__.'/settings.php';
-require __DIR__.'/auth.php';
+require __DIR__ . '/settings.php';
+require __DIR__ . '/auth.php';

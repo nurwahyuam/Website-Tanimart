@@ -1,9 +1,10 @@
 import { Button } from '@/components/button';
 import ImageCarousel from '@/components/ImageCarousel';
 import Pagination from '@/components/ui/pagination';
+import { useMobileNavigation } from '@/hooks/use-mobile-navigation';
 import { formatRupiah } from '@/lib/format';
-import { Head, Link } from '@inertiajs/react';
-import { Bell, Frown, Mail, MapPin, Phone, RotateCcw, Search, ShoppingCart, Star } from 'lucide-react';
+import { Head, Link, router } from '@inertiajs/react';
+import { Bell, Frown, LogOut, Mail, MapPin, Phone, RotateCcw, Search, ShoppingCart, Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 interface Category {
@@ -65,7 +66,7 @@ interface CartItem {
     seller_id: number;
 }
 
-export default function HomePage({ products: initialProducts, categories, notifications: initialNotifications }: Props) {
+export default function HomePage({ products: initialProducts, categories, notifications }: Props) {
     const images = ['/images/banner1.jpg', '/images/banner2.jpg', '/images/banner3.jpg'];
     const [allProducts] = useState<Product[]>(initialProducts.data);
     const [filteredProducts, setFilteredProducts] = useState<Product[]>(initialProducts.data);
@@ -79,7 +80,8 @@ export default function HomePage({ products: initialProducts, categories, notifi
     const [isCartOpen, setIsCartOpen] = useState(false);
     const [isNotifOpen, setIsNotifOpen] = useState(false);
     const [cartItems, setCartItems] = useState<CartItem[]>([]);
-    const [notifications, setNotifications] = useState<Notification[]>(initialNotifications);
+    const [unreadNotifications, setUnreadNotifications] = useState(notifications.filter((notification) => !notification.is_read).length);
+    const cleanup = useMobileNavigation();
 
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 8;
@@ -210,17 +212,39 @@ export default function HomePage({ products: initialProducts, categories, notifi
         localStorage.removeItem('cartItems');
     };
 
-    const markNotificationAsRead = (id: number) => {
-        setNotifications((prev) => prev.map((notif) => (notif.id === id ? { ...notif, is_read: true } : notif)));
+    const markNotificationAsRead = async (id: number) => {
+        try {
+            await fetch(route('notifications.markAsRead'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                },
+                body: JSON.stringify({ id }),
+            });
+
+            // Update UI lokal
+            setUnreadNotifications((prev) => Math.max(0, prev - 1));
+            // Atau: Refetch notifikasi jika diperlukan
+        } catch (error) {
+            console.error('Gagal menandai notifikasi sebagai dibaca:', error);
+        }
     };
 
     const markAllNotificationsAsRead = () => {
-        setNotifications((prev) => prev.map((notif) => ({ ...notif, is_read: true })));
+        router.post(
+            route('notifications.markAllAsRead'),
+            {},
+            {
+                preserveScroll: true,
+                preserveState: true,
+                only: ['notifications'], // Pastikan props ini disertakan kembali di controller
+            },
+        );
     };
 
     const totalItems = cartItems.reduce((sum, item) => sum + item.quantity, 0);
     const totalPrice = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const unreadNotifications = notifications.filter((n) => !n.is_read).length;
 
     // Check if all items in cart are from the same seller
     const isSingleSellerCart = useMemo(() => {
@@ -228,6 +252,11 @@ export default function HomePage({ products: initialProducts, categories, notifi
         const firstSellerId = cartItems[0].seller_id;
         return cartItems.every((item) => item.seller_id === firstSellerId);
     }, [cartItems]);
+
+    const handleLogout = () => {
+        cleanup();
+        router.flushAll();
+    };
 
     return (
         <div className="min-h-screen bg-[#FDFDFC] text-[#1b1b18] dark:bg-[#0a0a0a] dark:text-[#EDEDEC]">
@@ -240,9 +269,9 @@ export default function HomePage({ products: initialProducts, categories, notifi
             {/* Header */}
             <header className="sticky top-0 z-10 bg-white shadow-sm dark:bg-[#0a0a0a]">
                 <div className="container mx-auto flex items-center justify-between p-4">
-                    <Link href="/" className="flex items-center gap-2">
+                    <Link href="/home" className="flex items-center gap-2">
                         <img src="/favicon.svg" alt="TaniMart Logo" className="h-10 w-10" />
-                        <span className="text-2xl font-bold hidden md:flex">
+                        <span className="hidden text-2xl font-bold md:flex">
                             Tani<span className="bg-gradient-to-r from-[#0D7E05] to-[#87C603] bg-clip-text text-transparent">Mart</span>
                         </span>
                     </Link>
@@ -260,7 +289,7 @@ export default function HomePage({ products: initialProducts, categories, notifi
                         />
                     </div>
 
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
                         {/* Notification Dropdown */}
                         <div className="relative">
                             <button
@@ -439,7 +468,7 @@ export default function HomePage({ products: initialProducts, categories, notifi
                                                             Clear Cart
                                                         </button>
                                                         <Link
-                                                            href={route("customer.checkout")}
+                                                            href={route('customer.checkout')}
                                                             className="flex-1 rounded-md bg-green-600 px-4 py-2 text-center text-sm font-medium text-white hover:bg-green-700"
                                                         >
                                                             Checkout
@@ -453,8 +482,25 @@ export default function HomePage({ products: initialProducts, categories, notifi
                             )}
                         </div>
 
+                        {/* {Auth::user()->profile_image && (
+
+                        ) : (
+
+                        )} */}
+
                         <Link href={route('register')} className="rounded-md bg-green-600 px-4 py-2 text-sm font-bold text-white hover:bg-green-700">
                             Open Shop
+                        </Link>
+
+                        <Link
+                            className="flex items-center justify-center rounded-md bg-green-600 px-4 py-1.5 text-sm font-bold text-white hover:bg-green-700"
+                            method="post"
+                            href={route('logout')}
+                            as="button"
+                            onClick={handleLogout}
+                        >
+                            <LogOut className="mr-2" />
+                            Log out
                         </Link>
                     </div>
                 </div>

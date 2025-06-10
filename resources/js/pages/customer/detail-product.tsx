@@ -1,8 +1,8 @@
+import { useMobileNavigation } from '@/hooks/use-mobile-navigation';
 import { formatRupiah } from '@/lib/format';
 import { PageProps } from '@/types';
 import { Head, Link, router, usePage } from '@inertiajs/react';
-import axios from 'axios';
-import { Bell, ChevronLeft, Mail, MapPin, Phone, Search, ShoppingCart, Star } from 'lucide-react';
+import { Bell, ChevronLeft, LogOut, Mail, MapPin, Phone, Search, ShoppingCart, Star } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 interface ProductImage {
@@ -44,17 +44,18 @@ interface Category {
     active: 'true' | 'false';
 }
 
-interface Props {
-    id: number;
-    categories: Category[];
-}
-
 interface Notification {
     id: number;
     message: string;
     is_read: boolean;
     created_at: string;
     type: string;
+}
+
+interface Props {
+    id: number;
+    categories: Category[];
+    notifications: Notification[];
 }
 
 interface ProductDetailProps {
@@ -85,19 +86,16 @@ interface CartItem {
     seller_id: number;
 }
 
-export default function ProductDetail({ categories }: Props) {
-    const { product, averageRating, relatedProducts, auth } = usePage<PageProps & ProductDetailProps>().props;
+export default function ProductDetail({ categories, notifications }: Props) {
+    const cleanup = useMobileNavigation();
+    const { product, averageRating, relatedProducts } = usePage<PageProps & ProductDetailProps>().props;
     const [selectedImage, setSelectedImage] = useState(product.images[0]?.image_product_url || '/images/placeholder-product.jpg');
     const [quantity, setQuantity] = useState(1);
     const [isCartOpen, setIsCartOpen] = useState(false);
     const [isNotifOpen, setIsNotifOpen] = useState(false);
+    const [unreadNotifications, setUnreadNotifications] = useState(notifications.filter((notification) => !notification.is_read).length);
+
     const [cartItems, setCartItems] = useState<CartItem[]>([]);
-    const [notifications, setNotifications] = useState<Notification[]>([]);
-    const [loading, setLoading] = useState({
-        notifications: false,
-        cart: false,
-        wishlist: false,
-    });
     const [toast, setToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({
         show: false,
         message: '',
@@ -129,26 +127,6 @@ export default function ProductDetail({ categories }: Props) {
         }
     }, [cartItems]);
 
-    // Load notifications from API if user is authenticated
-    useEffect(() => {
-        if (!auth?.user) return;
-
-        const fetchNotifications = async () => {
-            try {
-                setLoading((prev) => ({ ...prev, notifications: true }));
-                const response = await axios.get('/api/notifications');
-                setNotifications(response.data.data);
-            } catch (error) {
-                console.error('Failed to fetch notifications', error);
-            } finally {
-                setLoading((prev) => ({ ...prev, notifications: false }));
-            }
-        };
-
-        fetchNotifications();
-    }, [auth?.user]);
-
-    const unreadNotifications = notifications.filter((n) => !n.is_read).length;
     const totalItems = cartItems.reduce((sum, item) => sum + item.quantity, 0);
     const totalPrice = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
     const isSingleSellerCart = new Set(cartItems.map((item) => item.seller_id)).size === 1;
@@ -202,36 +180,38 @@ export default function ProductDetail({ categories }: Props) {
 
     const markNotificationAsRead = async (id: number) => {
         try {
-            await axios.patch(`/api/notifications/${id}/read`);
-            setNotifications(notifications.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
+            await fetch(route('notifications.markAsRead'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                },
+                body: JSON.stringify({ id }),
+            });
+
+            // Update UI lokal
+            setUnreadNotifications((prev) => Math.max(0, prev - 1));
+            // Atau: Refetch notifikasi jika diperlukan
         } catch (error) {
-            console.error('Failed to mark notification as read', error);
+            console.error('Gagal menandai notifikasi sebagai dibaca:', error);
         }
     };
 
-    const markAllNotificationsAsRead = async () => {
-        try {
-            await axios.patch('/api/notifications/mark-all-read');
-            setNotifications(notifications.map((n) => ({ ...n, is_read: true })));
-        } catch (error) {
-            console.error('Failed to mark all notifications as read', error);
-        }
+    const markAllNotificationsAsRead = () => {
+        router.post(
+            route('notifications.markAllAsRead'),
+            {},
+            {
+                preserveScroll: true,
+                preserveState: true,
+                only: ['notifications'], // Pastikan props ini disertakan kembali di controller
+            },
+        );
     };
 
-    const handleCheckout = () => {
-        if (!auth?.user) {
-            router.visit('/login');
-            return;
-        }
-
-        // Convert cart items to format suitable for backend
-        const checkoutItems = cartItems.map((item) => ({
-            product_id: item.product_id,
-            quantity: item.quantity,
-            price: item.price,
-        }));
-
-        router.post('/checkout', { items: checkoutItems });
+    const handleLogout = () => {
+        cleanup();
+        router.flushAll();
     };
 
     return (
@@ -261,7 +241,7 @@ export default function ProductDetail({ categories }: Props) {
                 <div className="container mx-auto flex items-center justify-between p-4">
                     <Link href="/" className="flex items-center gap-2">
                         <img src="/favicon.svg" alt="TaniMart Logo" className="h-10 w-10" />
-                        <span className="text-2xl font-bold hidden md:flex">
+                        <span className="hidden text-2xl font-bold md:flex">
                             Tani<span className="bg-gradient-to-r from-[#0D7E05] to-[#87C603] bg-clip-text text-transparent">Mart</span>
                         </span>
                     </Link>
@@ -278,104 +258,74 @@ export default function ProductDetail({ categories }: Props) {
                         />
                     </div>
 
-                    <div className="flex items-center gap-4">
-                        {/* Notification Dropdown - Only show if authenticated */}
-                        {auth?.user && (
-                            <div className="relative">
-                                <button
-                                    onClick={() => setIsNotifOpen(!isNotifOpen)}
-                                    className="relative p-2 text-gray-700 hover:text-green-600 dark:text-gray-300 dark:hover:text-green-400"
-                                    disabled={loading.notifications}
-                                >
-                                    <Bell className="h-6 w-6" />
-                                    {unreadNotifications > 0 && (
-                                        <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs text-white">
-                                            {unreadNotifications}
-                                        </span>
-                                    )}
-                                </button>
-
-                                {isNotifOpen && (
-                                    <div
-                                        className="absolute right-0 z-20 w-80 origin-top-right rounded-md bg-white shadow-xl focus:outline-none dark:bg-gray-800"
-                                        onMouseLeave={() => setIsNotifOpen(false)}
-                                    >
-                                        <div className="p-4">
-                                            <div className="flex items-center justify-between border-b pb-3">
-                                                <h3 className="text-lg font-medium">Notifications ({notifications.length})</h3>
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        onClick={markAllNotificationsAsRead}
-                                                        className="text-sm text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
-                                                        disabled={loading.notifications}
-                                                    >
-                                                        Mark all as read
-                                                    </button>
-                                                    <button
-                                                        onClick={() => setIsNotifOpen(false)}
-                                                        className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                                                    >
-                                                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                            <path
-                                                                strokeLinecap="round"
-                                                                strokeLinejoin="round"
-                                                                strokeWidth={2}
-                                                                d="M6 18L18 6M6 6l12 12"
-                                                            />
-                                                        </svg>
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {loading.notifications ? (
-                                                <div className="flex items-center justify-center py-8">
-                                                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-green-500 border-t-transparent"></div>
-                                                </div>
-                                            ) : notifications.length === 0 ? (
-                                                <div className="flex flex-col items-center justify-center py-8">
-                                                    <Bell className="h-12 w-12 text-gray-400" />
-                                                    <p className="mt-4 text-gray-500">No notifications yet</p>
-                                                </div>
-                                            ) : (
-                                                <div className="max-h-96 overflow-y-auto">
-                                                    <ul className="divide-y divide-gray-200 dark:divide-gray-700">
-                                                        {notifications.map((notification) => (
-                                                            <li
-                                                                key={notification.id}
-                                                                className={`px-2 py-3 ${!notification.is_read ? 'bg-green-50 dark:bg-gray-700' : ''}`}
-                                                                onClick={() => markNotificationAsRead(notification.id)}
-                                                            >
-                                                                <div className="flex items-start">
-                                                                    <div
-                                                                        className={`flex h-6 w-6 items-center justify-center rounded-full ${notification.type === 'order' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300' : 'bg-green-100 text-green-600 dark:bg-green-900 dark:text-green-300'}`}
-                                                                    >
-                                                                        {notification.type === 'order' ? (
-                                                                            <ShoppingCart className="h-4 w-4" />
-                                                                        ) : (
-                                                                            <Star className="h-4 w-4" />
-                                                                        )}
-                                                                    </div>
-                                                                    <div className="ml-2 flex-1">
-                                                                        <p className="text-sm">{notification.message}</p>
-                                                                        <p className="mt-1 text-xs text-gray-500">
-                                                                            {new Date(notification.created_at).toLocaleString()}
-                                                                        </p>
-                                                                    </div>
-                                                                    {!notification.is_read && (
-                                                                        <div className="ml-2 h-2 w-2 rounded-full bg-green-500"></div>
-                                                                    )}
-                                                                </div>
-                                                            </li>
-                                                        ))}
-                                                    </ul>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
+                    <div className="flex items-center gap-3">
+                        {/* Notification Dropdown */}
+                        <div className="relative">
+                            <button
+                                onClick={() => setIsNotifOpen(!isNotifOpen)}
+                                className="relative p-2 text-gray-700 hover:text-green-600 dark:text-gray-300 dark:hover:text-green-400"
+                            >
+                                <Bell className="h-6 w-6" />
+                                {unreadNotifications > 0 && (
+                                    <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs text-white">
+                                        {unreadNotifications}
+                                    </span>
                                 )}
-                            </div>
-                        )}
+                            </button>
 
+                            {isNotifOpen && (
+                                <div
+                                    className="absolute right-0 w-80 origin-top-right rounded-md bg-white shadow-xl focus:outline-none dark:bg-gray-800"
+                                    onMouseLeave={() => setIsNotifOpen(false)}
+                                >
+                                    <div className="p-4">
+                                        <div className="flex items-center justify-between border-b pb-3">
+                                            <h3 className="text-lg font-medium">Notifications ({notifications.length})</h3>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={markAllNotificationsAsRead}
+                                                    className="text-sm text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
+                                                >
+                                                    Mark all as read
+                                                </button>
+                                                <button
+                                                    onClick={() => setIsNotifOpen(false)}
+                                                    className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                                                >
+                                                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {notifications.length === 0 ? (
+                                            <div className="flex flex-col items-center justify-center py-8">
+                                                <Bell className="h-12 w-12 text-gray-400" />
+                                                <p className="mt-4 text-gray-500">No notifications yet</p>
+                                            </div>
+                                        ) : (
+                                            <div className="max-h-96 overflow-y-auto">
+                                                <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                                                    {notifications.map((notification) => (
+                                                        <li
+                                                            key={notification.id}
+                                                            className={`px-2 py-3 ${!notification.is_read ? 'bg-green-50 dark:bg-gray-700' : ''}`}
+                                                            onClick={() => markNotificationAsRead(notification.id)}
+                                                        >
+                                                            <p className="text-sm">{notification.message}</p>
+                                                            <p className="mt-1 text-xs text-gray-500">
+                                                                {new Date(notification.created_at).toLocaleString()}
+                                                            </p>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                         {/* Cart Dropdown */}
                         <div className="relative">
                             <button
@@ -489,12 +439,12 @@ export default function ProductDetail({ categories }: Props) {
                                                         >
                                                             Clear Cart
                                                         </button>
-                                                        <button
-                                                            onClick={handleCheckout}
+                                                        <Link
+                                                            href={route('customer.checkout')}
                                                             className="flex-1 rounded-md bg-green-600 px-4 py-2 text-center text-sm font-medium text-white hover:bg-green-700"
                                                         >
                                                             Checkout
-                                                        </button>
+                                                        </Link>
                                                     </div>
                                                 </div>
                                             </>
@@ -503,9 +453,18 @@ export default function ProductDetail({ categories }: Props) {
                                 </div>
                             )}
                         </div>
-
                         <Link href="/register" className="rounded-md bg-green-600 px-4 py-2 text-sm font-bold text-white hover:bg-green-700">
                             Open Shop
+                        </Link>
+                        <Link
+                            className="flex items-center justify-center rounded-md bg-green-600 px-4 py-1.5 text-sm font-bold text-white hover:bg-green-700"
+                            method="post"
+                            href={route('logout')}
+                            as="button"
+                            onClick={handleLogout}
+                        >
+                            <LogOut className="mr-2" />
+                            Log out
                         </Link>
                     </div>
                 </div>
@@ -636,14 +595,14 @@ export default function ProductDetail({ categories }: Props) {
                                         </button>
                                     </div>
                                 </div>
-                                    <button
-                                        onClick={handleAddToCart}
-                                        className="flex items-center mt-6 justify-center rounded-md bg-green-600 px-6 py-2 text-white hover:bg-green-700 disabled:opacity-50"
-                                        disabled={quantity > product.stock}
-                                    >
-                                        <ShoppingCart className="mr-2 h-5 w-5" />
-                                        Add to Cart
-                                    </button>
+                                <button
+                                    onClick={handleAddToCart}
+                                    className="mt-6 flex items-center justify-center rounded-md bg-green-600 px-6 py-2 text-white hover:bg-green-700 disabled:opacity-50"
+                                    disabled={quantity > product.stock}
+                                >
+                                    <ShoppingCart className="mr-2 h-5 w-5" />
+                                    Add to Cart
+                                </button>
                             </div>
                         ) : (
                             <div className="rounded-md bg-red-100 p-4 text-red-700 dark:bg-red-900 dark:text-red-200">
